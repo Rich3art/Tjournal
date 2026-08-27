@@ -1,0 +1,117 @@
+name: Build cPanel Artifact
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout build repo
+        uses: actions/checkout@v4
+
+      - name: Checkout upstream Journedge
+        uses: actions/checkout@v4
+        with:
+          repository: TheQuantum-Dev/journedge
+          path: journedge
+
+      - name: Apply cPanel overlay
+        run: |
+          cp overlay/server.js journedge/server.js
+          cp overlay/next.config.ts journedge/next.config.ts
+          cp overlay/app/api/update/route.ts journedge/app/api/update/route.ts
+          cp overlay/app/api/update/restart/route.ts journedge/app/api/update/restart/route.ts
+          cat > journedge/.env.example <<'EOF'
+          DATABASE_URL="file:./prisma/journedge.db"
+          EOF
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: journedge/package-lock.json
+
+      - name: Install dependencies
+        working-directory: journedge
+        run: npm ci
+
+      - name: Generate Prisma client
+        working-directory: journedge
+        run: npx prisma generate
+
+      - name: Build production app
+        working-directory: journedge
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+          RAYON_NUM_THREADS: '1'
+          DATABASE_URL: file:./prisma/journedge.db
+        run: npx next build --webpack
+
+      - name: Assemble cPanel artifact
+        working-directory: journedge
+        run: |
+          mkdir -p ../artifact/.next/static ../artifact/prisma ../artifact/public/uploads
+          cp -R .next/standalone/. ../artifact/
+          cp -R .next/static/. ../artifact/.next/static/
+          cp -R public/. ../artifact/public/
+          cp -R prisma/migrations ../artifact/prisma/migrations
+          cp prisma/schema.prisma ../artifact/prisma/schema.prisma
+          cp package.json package-lock.json next.config.ts server.js ../artifact/
+          cat > ../artifact/.env.example <<'EOF'
+          DATABASE_URL="file:./prisma/journedge.db"
+          EOF
+          cat > ../artifact/DEPLOYMENT-CPANEL.md <<'EOF'
+          # Journedge cPanel Deployment Artifact
+
+          This artifact was built by GitHub Actions from upstream Journedge with a minimal cPanel overlay.
+
+          ## cPanel runtime
+
+          - Node.js: 22.23.2 preferred
+          - App root: `/home/thesite1/journedge-app`
+          - Startup file: `server.js`
+          - Environment variables: `NODE_ENV=production`, `DATABASE_URL=file:./prisma/journedge.db`
+
+          ## Server setup
+
+          ```bash
+          cd /home/thesite1/journedge-app
+          cp .env.example .env
+          chmod 600 .env
+          npx prisma migrate deploy
+          npx prisma generate
+          cloudlinux-selector create --json --interpreter nodejs --domain journal.ranksmedia.com --app-root journedge-app --app-uri / --version 22.23.2 --app-mode production --startup-file server.js --env-vars '{"NODE_ENV":"production","DATABASE_URL":"file:./prisma/journedge.db"}'
+          cloudlinux-selector restart --json --interpreter nodejs --domain journal.ranksmedia.com --app-root journedge-app
+          ```
+
+          ## Security
+
+          The upstream `/api/update` and `/api/update/restart` endpoints are disabled in this artifact.
+          Keep `.env`, `.git`, database files, backups, and logs outside public exposure.
+          EOF
+          tar -czf ../journedge-cpanel-artifact.tar.gz -C ../artifact .
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: journedge-cpanel-artifact
+          path: journedge-cpanel-artifact.tar.gz
+
+      - name: Publish release artifact
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: cpanel-build
+          name: cPanel Build
+          body: Automated cPanel deployment artifact for Journedge.
+          files: journedge-cpanel-artifact.tar.gz
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
