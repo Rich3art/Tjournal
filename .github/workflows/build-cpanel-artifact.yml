@@ -68,7 +68,7 @@ jobs:
           cp -R public/. ../artifact/public/
           cp -R prisma/migrations ../artifact/prisma/migrations
           cp prisma/schema.prisma ../artifact/prisma/schema.prisma
-          cp package.json package-lock.json next.config.ts server.js ../artifact/
+          cp package.json package-lock.json next.config.ts ../artifact/
           cat > ../artifact/.env.example <<'EOF'
           DATABASE_URL="file:./prisma/journedge.db"
           EOF
