@@ -41,6 +41,12 @@ jobs:
         working-directory: journedge
         run: npm install
 
+      - name: Patch production dependencies
+        working-directory: journedge
+        run: |
+          npm install next@16.3.3
+          npm audit --omit=dev
+
       - name: Generate Prisma client
         working-directory: journedge
         run: npx prisma generate
